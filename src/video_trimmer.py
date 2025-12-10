@@ -6,6 +6,8 @@ from moviepy.editor import VideoFileClip
 import threading
 from PIL import Image, ImageTk
 import cv2
+import tempfile
+import pygame
 
 class VideoTrimmer:
     def __init__(self, root):
@@ -21,6 +23,10 @@ class VideoTrimmer:
         self.current_frame = None
         self.is_playing = False
         self.current_time = 0
+        
+        # Audio-related
+        self.temp_audio_path = None
+        self.audio_ready = False
         
         # Create UI components
         self.create_widgets()
@@ -42,7 +48,7 @@ class VideoTrimmer:
         self.file_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         ttk.Button(main_frame, text="Browse Video", command=self.browse_file).grid(row=2, column=0, sticky=tk.W, pady=10)
-        
+
         # Video player section
         self.video_frame = ttk.LabelFrame(main_frame, text="Video Preview", padding="10")
         self.video_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
@@ -57,10 +63,16 @@ class VideoTrimmer:
         controls_frame.grid(row=1, column=0, pady=5)
         
         self.play_button = ttk.Button(controls_frame, text="▶ Play", command=self.toggle_play, state=tk.DISABLED)
-        self.play_button.grid(row=0, column=0, padx=5)
+        self.play_button.grid(row=0, column=1, padx=5)
+        
+        # Jump buttons: back and forward 5s
+        self.jump_back_button = ttk.Button(controls_frame, text="<< 5s", command=lambda: self.jump(-5), state=tk.DISABLED)
+        self.jump_back_button.grid(row=0, column=0, padx=5)
+        self.jump_forward_button = ttk.Button(controls_frame, text="5s >>", command=lambda: self.jump(5), state=tk.DISABLED)
+        self.jump_forward_button.grid(row=0, column=2, padx=5)
         
         self.time_label = ttk.Label(controls_frame, text="00:00.00 / 00:00.00")
-        self.time_label.grid(row=0, column=1, padx=10)
+        self.time_label.grid(row=0, column=3, padx=10)
         
         # Timeline slider
         self.timeline = ttk.Scale(self.video_frame, from_=0, to=100, orient=tk.HORIZONTAL, command=self.on_timeline_change)
@@ -126,11 +138,28 @@ class VideoTrimmer:
             self.progress_label.config(text="Loading video...")
             self.root.update()
             
-            # Clean up previous video
+            # Clean up previous video and audio
             if self.cap:
                 self.cap.release()
+                self.cap = None
             if self.clip:
                 self.clip.close()
+                self.clip = None
+            try:
+                pygame.mixer.stop()
+            except Exception:
+                pass
+            try:
+                pygame.mixer.quit()
+            except Exception:
+                pass
+            if self.temp_audio_path:
+                try:
+                    os.remove(self.temp_audio_path)
+                except Exception:
+                    pass
+                self.temp_audio_path = None
+                self.audio_ready = False
             
             # Load video with OpenCV for playback
             self.cap = cv2.VideoCapture(file_path)
@@ -166,21 +195,59 @@ class VideoTrimmer:
             name_without_ext = os.path.splitext(filename)[0]
             extension = os.path.splitext(filename)[1]
             self.output_entry.delete(0, tk.END)
-            self.output_entry.insert(0, f"{name_without_ext}_trimmed{extension}")
+            self.output_entry.insert(0, f"output{extension}")
             
             # Enable controls
             self.play_button.config(state=tk.NORMAL)
             self.trim_button.config(state=tk.NORMAL)
             self.set_start_button.config(state=tk.NORMAL)
             self.set_end_button.config(state=tk.NORMAL)
+            self.jump_back_button.config(state=tk.NORMAL)
+            self.jump_forward_button.config(state=tk.NORMAL)
             self.timeline.state(['!disabled'])
             self.timeline.config(to=self.video_duration)
+            
+            # If audio exists, extract in background
+            if self.clip.audio is not None:
+                self.progress_label.config(text="Extracting audio (background)...")
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                tmp.close()
+                self.temp_audio_path = tmp.name
+                threading.Thread(target=self._extract_audio, args=(self.clip, self.temp_audio_path), daemon=True).start()
+            else:
+                self.audio_ready = False
+                self.temp_audio_path = None
             
             self.progress_label.config(text="Video loaded successfully!")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load video:\n{str(e)}")
             self.progress_label.config(text="")
+    
+    def _extract_audio(self, clip, path):
+        """Extract audio to a WAV file (background)"""
+        try:
+            # Write audio to a wav file. This may take time for long files.
+            clip.audio.write_audiofile(path, fps=44100, codec='pcm_s16le', verbose=False, logger=None)
+            self.temp_audio_path = path
+            # Initialize pygame mixer
+            try:
+                pygame.mixer.init(frequency=44100)
+            except Exception:
+                pass
+            # Load into pygame.mixer on main thread
+            def _load():
+                try:
+                    pygame.mixer.music.load(self.temp_audio_path)
+                    self.audio_ready = True
+                    self.progress_label.config(text="Audio ready for preview.")
+                except Exception as e:
+                    self.audio_ready = False
+                    self.progress_label.config(text=f"Audio load failed: {e}")
+            self.root.after(0, _load)
+        except Exception as e:
+            self.audio_ready = False
+            self.root.after(0, lambda: self.progress_label.config(text=f"Audio extraction failed: {e}"))
     
     def display_frame_at_time(self, time_sec):
         """Display a specific frame from the video"""
@@ -223,10 +290,43 @@ class VideoTrimmer:
         if self.is_playing:
             self.is_playing = False
             self.play_button.config(text="▶ Play")
+            # Stop audio if playing
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
         else:
             self.is_playing = True
             self.play_button.config(text="⏸ Pause")
+            # Start audio (if ready) at current time
+            if self.audio_ready and self.temp_audio_path:
+                try:
+                    self.play_audio_from(self.current_time)
+                except Exception:
+                    pass
             self.play_video()
+    
+    def play_audio_from(self, start_time):
+        """Play audio WAV starting from given time (non-blocking) using pygame."""
+        if not self.audio_ready or not self.temp_audio_path:
+            return
+        try:
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
+            # pygame 2 supports 'start' parameter
+            try:
+                pygame.mixer.music.play(loops=0, start=start_time)
+            except TypeError:
+                # fallback: play then set position (may not work for all formats)
+                pygame.mixer.music.play(loops=0)
+                try:
+                    pygame.mixer.music.set_pos(start_time)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Audio playback error: {e}")
     
     def play_video(self):
         """Play video frames"""
@@ -234,7 +334,10 @@ class VideoTrimmer:
             return
         
         fps = self.cap.get(cv2.CAP_PROP_FPS)
-        frame_delay = int(1000 / fps)
+        try:
+            frame_delay = int(1000 / fps) if fps and fps > 0 else 33
+        except Exception:
+            frame_delay = 33
         
         ret, frame = self.cap.read()
         
@@ -271,6 +374,11 @@ class VideoTrimmer:
             self.play_button.config(text="▶ Play")
             self.current_time = 0
             self.cap.set(cv2.CAP_PROP_POS_MSEC, 0)
+            # Stop audio
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
     
     def on_timeline_change(self, value):
         """Handle timeline slider change"""
@@ -279,6 +387,11 @@ class VideoTrimmer:
             self.current_time = time_sec
             self.display_frame_at_time(time_sec)
             self.update_time_label()
+            # Stop audio if it was playing (we are not in playing mode here)
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
     
     def update_time_label(self):
         """Update the time display label"""
@@ -299,6 +412,28 @@ class VideoTrimmer:
         """Set end time to current playback position"""
         self.end_entry.delete(0, tk.END)
         self.end_entry.insert(0, f"{self.current_time:.2f}")
+    
+    def jump(self, seconds):
+        """Jump forward or backward by seconds, updating audio/video"""
+        if not self.clip or not self.cap:
+            return
+        new_time = self.current_time + seconds
+        new_time = max(0.0, min(self.video_duration, new_time))
+        self.current_time = new_time
+        self.cap.set(cv2.CAP_PROP_POS_MSEC, new_time * 1000)
+        self.display_frame_at_time(new_time)
+        self.timeline.set(new_time)
+        self.update_time_label()
+        # If currently playing, restart audio from new position
+        if self.is_playing and self.audio_ready and self.temp_audio_path:
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
+            try:
+                self.play_audio_from(new_time)
+            except Exception:
+                pass
     
     def trim_video(self):
         """Trim the video based on start and end times"""
@@ -379,5 +514,22 @@ class VideoTrimmer:
         self.is_playing = False
         if self.cap:
             self.cap.release()
+            self.cap = None
         if self.clip:
             self.clip.close()
+            self.clip = None
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
+        try:
+            pygame.mixer.quit()
+        except Exception:
+            pass
+        if self.temp_audio_path:
+            try:
+                os.remove(self.temp_audio_path)
+            except Exception:
+                pass
+            self.temp_audio_path = None
+            self.audio_ready = False

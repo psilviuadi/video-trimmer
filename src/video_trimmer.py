@@ -35,98 +35,84 @@ class VideoTrimmer:
         # Main container
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Configure grid weights for resizing
+
+        # Configure weights for resizing
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(0, weight=1)
-        
-        # Split UI into left and right columns
-        left_frame = ttk.Frame(main_frame)
-        left_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        left_frame.columnconfigure(0, weight=1)
-        left_frame.rowconfigure(3, weight=1)  # make video frame expand
-        
-        right_frame = ttk.Frame(main_frame)
-        right_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
-        right_frame.columnconfigure(0, weight=1)
-        
-        # File selection section (left column)
-        ttk.Label(left_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
-        
-        self.file_label = ttk.Label(left_frame, text="No file selected", foreground="gray")
-        self.file_label.grid(row=1, column=0, sticky=tk.W, pady=5)
-        
-        ttk.Button(left_frame, text="Browse Video", command=self.browse_file).grid(row=2, column=0, sticky=tk.W, pady=10)
+        main_frame.rowconfigure(1, weight=1)  # video row expands
 
-        # Video player section (left column)
-        self.video_frame = ttk.LabelFrame(left_frame, text="Video Preview", padding="10")
-        self.video_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
-        self.video_frame.columnconfigure(0, weight=1)
-        
-        # Canvas for video display
-        self.canvas = tk.Canvas(self.video_frame, width=640, height=360, bg="black")
-        self.canvas.grid(row=0, column=0, pady=5)
-        
-        # Video controls
-        controls_frame = ttk.Frame(self.video_frame)
-        controls_frame.grid(row=1, column=0, pady=5)
-        
-        self.play_button = ttk.Button(controls_frame, text="▶ Play", command=self.toggle_play, state=tk.DISABLED)
-        self.play_button.grid(row=0, column=1, padx=5)
-        
-        # Jump buttons: back and forward 5s
-        self.jump_back_button = ttk.Button(controls_frame, text="<< 5s", command=lambda: self.jump(-5), state=tk.DISABLED)
-        self.jump_back_button.grid(row=0, column=0, padx=5)
-        self.jump_forward_button = ttk.Button(controls_frame, text="5s >>", command=lambda: self.jump(5), state=tk.DISABLED)
-        self.jump_forward_button.grid(row=0, column=2, padx=5)
-        
-        self.time_label = ttk.Label(controls_frame, text="00:00.00 / 00:00.00")
-        self.time_label.grid(row=0, column=3, padx=10)
-        
-        # Timeline slider
-        self.timeline = ttk.Scale(self.video_frame, from_=0, to=100, orient=tk.HORIZONTAL, command=self.on_timeline_change)
-        self.timeline.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
-        self.timeline.state(['disabled'])
-        
-        # Trim controls section (right column)
-        ttk.Label(right_frame, text="Trim Settings:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
-        
-        trim_frame = ttk.Frame(right_frame)
+        # File selection column
+        file_frame = ttk.Frame(main_frame)
+        file_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        file_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(file_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.file_label = ttk.Label(file_frame, text="No file selected", foreground="gray")
+        self.file_label.grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Button(file_frame, text="Browse Video", command=self.browse_file).grid(row=2, column=0, sticky=tk.W, pady=10)
+
+        # Trim settings column
+        trim_container = ttk.Frame(main_frame)
+        trim_container.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        trim_container.columnconfigure(0, weight=1)
+
+        ttk.Label(trim_container, text="Trim Settings:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
+        trim_frame = ttk.Frame(trim_container)
         trim_frame.grid(row=1, column=0, sticky=tk.W, pady=5)
-        
+
         # Start time
         ttk.Label(trim_frame, text="Start Time (seconds):").grid(row=0, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.start_entry = ttk.Entry(trim_frame, width=15)
         self.start_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
         self.start_entry.insert(0, "0.00")
-        
         self.set_start_button = ttk.Button(trim_frame, text="Set to Current", command=self.set_start_to_current, state=tk.DISABLED)
         self.set_start_button.grid(row=0, column=2, padx=10)
-        
+
+        # place trim button alongside start row
+        self.trim_button = ttk.Button(trim_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
+        self.trim_button.grid(row=0, column=3, padx=(20,0))
+
         # End time
         ttk.Label(trim_frame, text="End Time (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.end_entry = ttk.Entry(trim_frame, width=15)
         self.end_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
         self.end_entry.insert(0, "0.00")
-        
         self.set_end_button = ttk.Button(trim_frame, text="Set to Current", command=self.set_end_to_current, state=tk.DISABLED)
         self.set_end_button.grid(row=1, column=2, padx=10)
-        
+
         # Output filename
         ttk.Label(trim_frame, text="Output Filename:").grid(row=2, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.output_entry = ttk.Entry(trim_frame, width=30)
         self.output_entry.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=5)
-        
-        # Trim button
-        self.trim_button = ttk.Button(right_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
-        self.trim_button.grid(row=2, column=0, pady=20)
-        
-        # Progress label
-        self.progress_label = ttk.Label(right_frame, text="", foreground="green")
-        self.progress_label.grid(row=3, column=0, pady=5)
+
+        # status label aligned with output row
+        self.progress_label = ttk.Label(trim_frame, text="", foreground="green")
+        self.progress_label.grid(row=2, column=3, padx=(20,0))
+
+        # Video player (spanning columns)
+        self.video_frame = ttk.LabelFrame(main_frame, text="Video Preview", padding="10")
+        self.video_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        self.video_frame.columnconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self.video_frame, width=800, height=450, bg="black")
+        self.canvas.grid(row=0, column=0, pady=5)
+
+        controls_frame = ttk.Frame(self.video_frame)
+        controls_frame.grid(row=1, column=0, pady=5)
+        self.play_button = ttk.Button(controls_frame, text="▶ Play", command=self.toggle_play, state=tk.DISABLED)
+        self.play_button.grid(row=0, column=1, padx=5)
+        self.jump_back_button = ttk.Button(controls_frame, text="<< 5s", command=lambda: self.jump(-5), state=tk.DISABLED)
+        self.jump_back_button.grid(row=0, column=0, padx=5)
+        self.jump_forward_button = ttk.Button(controls_frame, text="5s >>", command=lambda: self.jump(5), state=tk.DISABLED)
+        self.jump_forward_button.grid(row=0, column=2, padx=5)
+        self.time_label = ttk.Label(controls_frame, text="00:00.00 / 00:00.00")
+        self.time_label.grid(row=0, column=3, padx=10)
+
+        self.timeline = ttk.Scale(self.video_frame, from_=0, to=100, orient=tk.HORIZONTAL, command=self.on_timeline_change)
+        self.timeline.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
+        self.timeline.state(['disabled'])
     
     def browse_file(self):
         """Open file dialog to select a video file"""

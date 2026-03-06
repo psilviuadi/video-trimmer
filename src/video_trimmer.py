@@ -40,18 +40,30 @@ class VideoTrimmer:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=1)
+        main_frame.rowconfigure(0, weight=1)
         
-        # File selection section
-        ttk.Label(main_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
+        # Split UI into left and right columns
+        left_frame = ttk.Frame(main_frame)
+        left_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(3, weight=1)  # make video frame expand
         
-        self.file_label = ttk.Label(main_frame, text="No file selected", foreground="gray")
-        self.file_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=5)
+        right_frame = ttk.Frame(main_frame)
+        right_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        right_frame.columnconfigure(0, weight=1)
         
-        ttk.Button(main_frame, text="Browse Video", command=self.browse_file).grid(row=2, column=0, sticky=tk.W, pady=10)
+        # File selection section (left column)
+        ttk.Label(left_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
+        
+        self.file_label = ttk.Label(left_frame, text="No file selected", foreground="gray")
+        self.file_label.grid(row=1, column=0, sticky=tk.W, pady=5)
+        
+        ttk.Button(left_frame, text="Browse Video", command=self.browse_file).grid(row=2, column=0, sticky=tk.W, pady=10)
 
-        # Video player section
-        self.video_frame = ttk.LabelFrame(main_frame, text="Video Preview", padding="10")
-        self.video_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        # Video player section (left column)
+        self.video_frame = ttk.LabelFrame(left_frame, text="Video Preview", padding="10")
+        self.video_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         self.video_frame.columnconfigure(0, weight=1)
         
         # Canvas for video display
@@ -79,14 +91,11 @@ class VideoTrimmer:
         self.timeline.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
         self.timeline.state(['disabled'])
         
-        # Separator
-        ttk.Separator(main_frame, orient='horizontal').grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=15)
+        # Trim controls section (right column)
+        ttk.Label(right_frame, text="Trim Settings:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
         
-        # Trim controls section
-        ttk.Label(main_frame, text="Trim Settings:", font=("Arial", 12, "bold")).grid(row=5, column=0, sticky=tk.W, pady=5)
-        
-        trim_frame = ttk.Frame(main_frame)
-        trim_frame.grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=5)
+        trim_frame = ttk.Frame(right_frame)
+        trim_frame.grid(row=1, column=0, sticky=tk.W, pady=5)
         
         # Start time
         ttk.Label(trim_frame, text="Start Time (seconds):").grid(row=0, column=0, sticky=tk.W, pady=5, padx=(0, 10))
@@ -112,12 +121,12 @@ class VideoTrimmer:
         self.output_entry.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=5)
         
         # Trim button
-        self.trim_button = ttk.Button(main_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
-        self.trim_button.grid(row=7, column=0, pady=20)
+        self.trim_button = ttk.Button(right_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
+        self.trim_button.grid(row=2, column=0, pady=20)
         
         # Progress label
-        self.progress_label = ttk.Label(main_frame, text="", foreground="green")
-        self.progress_label.grid(row=8, column=0, columnspan=2, pady=5)
+        self.progress_label = ttk.Label(right_frame, text="", foreground="green")
+        self.progress_label.grid(row=3, column=0, pady=5)
     
     def browse_file(self):
         """Open file dialog to select a video file"""

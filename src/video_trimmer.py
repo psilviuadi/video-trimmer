@@ -102,13 +102,17 @@ class VideoTrimmer:
         controls_frame = ttk.Frame(self.video_frame)
         controls_frame.grid(row=1, column=0, pady=5)
         self.play_button = ttk.Button(controls_frame, text="▶ Play", command=self.toggle_play, state=tk.DISABLED)
-        self.play_button.grid(row=0, column=1, padx=5)
+        self.play_button.grid(row=0, column=2, padx=5)
         self.jump_back_button = ttk.Button(controls_frame, text="<< 5s", command=lambda: self.jump(-5), state=tk.DISABLED)
-        self.jump_back_button.grid(row=0, column=0, padx=5)
+        self.jump_back_button.grid(row=0, column=1, padx=5)
         self.jump_forward_button = ttk.Button(controls_frame, text="5s >>", command=lambda: self.jump(5), state=tk.DISABLED)
-        self.jump_forward_button.grid(row=0, column=2, padx=5)
+        self.jump_forward_button.grid(row=0, column=3, padx=5)
+        self.jump_to_start_button = ttk.Button(controls_frame, text="Start of Cut", command=self.jump_to_start_cut, state=tk.DISABLED)
+        self.jump_to_start_button.grid(row=0, column=0, padx=5)
+        self.jump_to_end_button = ttk.Button(controls_frame, text="End of Cut", command=self.jump_to_end_cut, state=tk.DISABLED)
+        self.jump_to_end_button.grid(row=0, column=4, padx=5)
         self.time_label = ttk.Label(controls_frame, text="00:00.00 / 00:00.00")
-        self.time_label.grid(row=0, column=3, padx=10)
+        self.time_label.grid(row=0, column=5, padx=10)
 
         self.timeline = ttk.Scale(self.video_frame, from_=0, to=100, orient=tk.HORIZONTAL, command=self.on_timeline_change)
         self.timeline.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
@@ -126,6 +130,15 @@ class VideoTrimmer:
         
         if file_path:
             self.load_video(file_path)
+
+    def find_next_numeric_output_name(self, directory, extension):
+        """Return the first available numeric filename like 1.mp4, 2.mp4, ... up to 50.
+        If none are available, return output.mp4."""
+        for index in range(1, 51):
+            candidate = f"{index}{extension}"
+            if not os.path.exists(os.path.join(directory, candidate)):
+                return candidate
+        return f"output{extension}"
     
     def load_video(self, file_path):
         """Load the selected video and update UI"""
@@ -186,11 +199,11 @@ class VideoTrimmer:
             self.end_entry.delete(0, tk.END)
             self.end_entry.insert(0, f"{self.video_duration:.2f}")
             
-            # Suggest output filename
-            name_without_ext = os.path.splitext(filename)[0]
+            # Suggest output filename using the first unused numeric name in the same folder
             extension = os.path.splitext(filename)[1]
+            suggested_name = self.find_next_numeric_output_name(os.path.dirname(file_path), extension)
             self.output_entry.delete(0, tk.END)
-            self.output_entry.insert(0, f"output{extension}")
+            self.output_entry.insert(0, suggested_name)
             
             # Enable controls
             self.play_button.config(state=tk.NORMAL)
@@ -199,6 +212,8 @@ class VideoTrimmer:
             self.set_end_button.config(state=tk.NORMAL)
             self.jump_back_button.config(state=tk.NORMAL)
             self.jump_forward_button.config(state=tk.NORMAL)
+            self.jump_to_start_button.config(state=tk.NORMAL)
+            self.jump_to_end_button.config(state=tk.NORMAL)
             self.timeline.state(['!disabled'])
             self.timeline.config(to=self.video_duration)
             
@@ -429,6 +444,50 @@ class VideoTrimmer:
                 self.play_audio_from(new_time)
             except Exception:
                 pass
+    
+    def jump_to_start_cut(self):
+        """Jump to the start of cut time"""
+        try:
+            start_time = float(self.start_entry.get())
+            self.current_time = start_time
+            self.cap.set(cv2.CAP_PROP_POS_MSEC, start_time * 1000)
+            self.display_frame_at_time(start_time)
+            self.timeline.set(start_time)
+            self.update_time_label()
+            # If currently playing, restart audio from new position
+            if self.is_playing and self.audio_ready and self.temp_audio_path:
+                try:
+                    pygame.mixer.music.stop()
+                except Exception:
+                    pass
+                try:
+                    self.play_audio_from(start_time)
+                except Exception:
+                    pass
+        except ValueError:
+            pass
+    
+    def jump_to_end_cut(self):
+        """Jump to the end of cut time"""
+        try:
+            end_time = float(self.end_entry.get())
+            self.current_time = end_time
+            self.cap.set(cv2.CAP_PROP_POS_MSEC, end_time * 1000)
+            self.display_frame_at_time(end_time)
+            self.timeline.set(end_time)
+            self.update_time_label()
+            # If currently playing, restart audio from new position
+            if self.is_playing and self.audio_ready and self.temp_audio_path:
+                try:
+                    pygame.mixer.music.stop()
+                except Exception:
+                    pass
+                try:
+                    self.play_audio_from(end_time)
+                except Exception:
+                    pass
+        except ValueError:
+            pass
     
     def trim_video(self):
         """Trim the video based on start and end times"""

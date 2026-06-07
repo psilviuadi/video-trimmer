@@ -47,11 +47,14 @@ class VideoTrimmer:
         file_frame = ttk.Frame(main_frame)
         file_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         file_frame.columnconfigure(0, weight=1)
+        file_frame.columnconfigure(1, weight=0)
 
-        ttk.Label(file_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(file_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5, columnspan=2)
         self.file_label = ttk.Label(file_frame, text="No file selected", foreground="gray")
-        self.file_label.grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.file_label.grid(row=1, column=0, sticky=tk.W, pady=5, columnspan=2)
         ttk.Button(file_frame, text="Browse Video", command=self.browse_file).grid(row=2, column=0, sticky=tk.W, pady=10)
+        self.next_button = ttk.Button(file_frame, text="Next Video", command=self.next_video, state=tk.DISABLED)
+        self.next_button.grid(row=3, column=0, sticky=tk.W, pady=5, columnspan=2)
 
         # Trim settings column
         trim_container = ttk.Frame(main_frame)
@@ -130,6 +133,50 @@ class VideoTrimmer:
         
         if file_path:
             self.load_video(file_path)
+
+    def find_next_video_path(self, current_path):
+        """Return the next alphabetically sorted video file in the same folder."""
+        if not current_path:
+            return None
+
+        directory = os.path.dirname(current_path)
+        supported_extensions = {".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv"}
+
+        try:
+            files = [
+                name for name in os.listdir(directory)
+                if os.path.isfile(os.path.join(directory, name))
+                and os.path.splitext(name)[1].lower() in supported_extensions
+            ]
+        except Exception:
+            return None
+
+        files = sorted(files, key=lambda name: name.lower())
+        current_name = os.path.basename(current_path)
+
+        for index, name in enumerate(files):
+            if name.lower() == current_name.lower():
+                if index + 1 < len(files):
+                    return os.path.join(directory, files[index + 1])
+                break
+
+        return None
+
+    def update_next_button_state(self):
+        """Enable or disable the next video button depending on current selection."""
+        if self.video_path and self.find_next_video_path(self.video_path):
+            self.next_button.config(state=tk.NORMAL)
+        else:
+            self.next_button.config(state=tk.DISABLED)
+
+    def next_video(self):
+        """Load the next video in the same folder."""
+        if not self.video_path:
+            return
+
+        next_path = self.find_next_video_path(self.video_path)
+        if next_path:
+            self.load_video(next_path)
 
     def find_next_numeric_output_name(self, directory, extension):
         """Return the first available numeric filename like 1.mp4, 2.mp4, ... up to 50.
@@ -216,6 +263,7 @@ class VideoTrimmer:
             self.jump_to_end_button.config(state=tk.NORMAL)
             self.timeline.state(['!disabled'])
             self.timeline.config(to=self.video_duration)
+            self.update_next_button_state()
             
             # If audio exists, extract in background
             if self.clip.audio is not None:

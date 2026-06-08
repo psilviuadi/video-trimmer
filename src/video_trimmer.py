@@ -2,7 +2,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 import os
-from moviepy.editor import VideoFileClip
+import moviepy
+try:
+    from moviepy.editor import VideoFileClip
+except Exception:
+    try:
+        from moviepy.video.io.VideoFileClip import VideoFileClip
+    except Exception:
+        VideoFileClip = getattr(moviepy, 'VideoFileClip', None)
+        if VideoFileClip is None:
+            raise
 import threading
 from PIL import Image, ImageTk
 import cv2
@@ -30,6 +39,33 @@ class VideoTrimmer:
         
         # Create UI components
         self.create_widgets()
+
+    def _safe_close_clip(self, clip):
+        """Attempt to close a MoviePy clip robustly across versions."""
+        if not clip:
+            return
+        try:
+            # Preferred API
+            clip.close()
+        except Exception:
+            try:
+                # Try closing reader and audio reader if available
+                if hasattr(clip, "reader") and clip.reader is not None:
+                    try:
+                        clip.reader.close()
+                    except Exception:
+                        pass
+                if hasattr(clip, "audio") and clip.audio is not None and hasattr(clip.audio, "reader"):
+                    try:
+                        # some versions expose close_proc()
+                        if hasattr(clip.audio.reader, "close_proc"):
+                            clip.audio.reader.close_proc()
+                        else:
+                            clip.audio.reader.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     
     def create_widgets(self):
         # Main container
@@ -198,8 +234,10 @@ class VideoTrimmer:
                 self.cap.release()
                 self.cap = None
             if self.clip:
-                self.clip.close()
-                self.clip = None
+                try:
+                    self._safe_close_clip(self.clip)
+                finally:
+                    self.clip = None
             try:
                 pygame.mixer.stop()
             except Exception:
@@ -286,7 +324,12 @@ class VideoTrimmer:
         """Extract audio to a WAV file (background)"""
         try:
             # Write audio to a wav file. This may take time for long files.
-            clip.audio.write_audiofile(path, fps=44100, codec='pcm_s16le', verbose=False, logger=None)
+            # Use supported kwargs for current MoviePy versions.
+            try:
+                clip.audio.write_audiofile(path, fps=44100, nbytes=2, codec='pcm_s16le', write_logfile=False)
+            except TypeError:
+                # Fallback if codec/nbytes combo not accepted; try without codec
+                clip.audio.write_audiofile(path, fps=44100, nbytes=2, write_logfile=False)
             self.temp_audio_path = path
             # Initialize pygame mixer
             try:
@@ -304,8 +347,29 @@ class VideoTrimmer:
                     self.progress_label.config(text=f"Audio load failed: {e}")
             self.root.after(0, _load)
         except Exception as e:
-            self.audio_ready = False
-            self.root.after(0, lambda: self.progress_label.config(text=f"Audio extraction failed: {e}"))
+            # Try a lower-level ffmpeg writer as a fallback
+            import moviepy.audio.io.ffmpeg_audiowriter as ffaw
+            try:
+                ffaw.ffmpeg_audiowrite(clip, path, 44100, 2, 2000, codec='pcm_s16le', write_logfile=False)
+                self.temp_audio_path = path
+                try:
+                    pygame.mixer.init(frequency=44100)
+                except Exception:
+                    pass
+                def _load2():
+                    try:
+                        pygame.mixer.music.load(self.temp_audio_path)
+                        self.audio_ready = True
+                        self.progress_label.config(text="Audio ready for preview.")
+                    except Exception as e2:
+                        self.audio_ready = False
+                        self.progress_label.config(text=f"Audio load failed: {e2}")
+                self.root.after(0, _load2)
+                return
+            except Exception as e2:
+                self.audio_ready = False
+                msg = f"{e} | fallback error: {e2}"
+                self.root.after(0, lambda m=msg: self.progress_label.config(text=f"Audio extraction failed: {m}"))
     
     def display_frame_at_time(self, time_sec):
         """Display a specific frame from the video"""
@@ -584,14 +648,17 @@ class VideoTrimmer:
     def process_trim(self, start_time, end_time, output_path):
         """Process the video trimming in a separate thread"""
         try:
-            # Create trimmed clip
-            trimmed_clip = self.clip.subclip(start_time, end_time)
+            # Create trimmed clip (use compatibility helper)
+            trimmed_clip = self._make_subclip(self.clip, start_time, end_time)
             
             # Write to file
             trimmed_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
-            
-            # Close clips
-            trimmed_clip.close()
+
+            # Close clips robustly
+            try:
+                self._safe_close_clip(trimmed_clip)
+            except Exception:
+                pass
             
             # Update UI on main thread
             self.root.after(0, self.trim_complete, output_path)
@@ -618,20 +685,35 @@ class VideoTrimmer:
             self.cap.release()
             self.cap = None
         if self.clip:
-            self.clip.close()
-            self.clip = None
+            try:
+                self._safe_close_clip(self.clip)
+            finally:
+                self.clip = None
         try:
             pygame.mixer.music.stop()
         except Exception:
             pass
+
+    def _make_subclip(self, clip, start, end):
+        """Return a subclip between start and end, compatible across MoviePy versions."""
+        # Prefer older API
+        if hasattr(clip, "subclip"):
+            return clip.subclip(start, end)
+        # Newer API
+        if hasattr(clip, "subclipped"):
+            return clip.subclipped(start, end)
+        # Try slice syntax
         try:
-            pygame.mixer.quit()
+            return clip[start:end]
         except Exception:
             pass
-        if self.temp_audio_path:
-            try:
-                os.remove(self.temp_audio_path)
-            except Exception:
-                pass
-            self.temp_audio_path = None
-            self.audio_ready = False
+        # As a last resort, try composing via time_transform
+        try:
+            new_clip = clip.time_transform(lambda t: t + start, apply_to=[])
+            if end is None:
+                return new_clip
+            new_clip.duration = end - start
+            new_clip.end = new_clip.start + new_clip.duration
+            return new_clip
+        except Exception:
+            raise RuntimeError("Unable to create subclip with installed MoviePy version")

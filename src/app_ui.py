@@ -2,23 +2,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 import os
-from .env_utils import load_env
-
-# Load environment variables from .env or .env.example
-load_env()
-
-import moviepy
-try:
-    from moviepy.editor import VideoFileClip, concatenate_videoclips
-except Exception:
-    try:
-        from moviepy.video.io.VideoFileClip import VideoFileClip
-        from moviepy.video.compositing.concatenate import concatenate_videoclips
-    except Exception:
-        VideoFileClip = getattr(moviepy, 'VideoFileClip', None)
-        concatenate_videoclips = getattr(moviepy, 'concatenate_videoclips', None)
-        if VideoFileClip is None or concatenate_videoclips is None:
-            raise
 import threading
 from PIL import Image, ImageTk
 import cv2
@@ -26,13 +9,17 @@ import tempfile
 import pygame
 from proglog import ProgressBarLogger
 
+from .video_trim_service import trim_video, _safe_close_clip
+from .video_combine_service import combine_numbered_clips
+from moviepy.video.io.VideoFileClip import VideoFileClip
+
+
 class VideoTrimmer:
     def __init__(self, root):
         self.root = root
         self.root.title("Video Trimmer")
         self.root.geometry("900x750")
-        
-        # Variables to store video info
+
         self.video_path = None
         self.video_duration = 0
         self.clip = None
@@ -40,20 +27,16 @@ class VideoTrimmer:
         self.current_frame = None
         self.is_playing = False
         self.current_time = 0
-        
-        # Audio-related
+
         self.temp_audio_path = None
         self.audio_ready = False
-        # Progress tracking state for UI
         self._progress_state = {}
-        self._progress_lock = threading.Lock()
-        
-        # Create UI components
+
         self.create_widgets()
 
     def _make_progress_logger(self, min_time_interval=0.2):
-        """Create a ProgressBarLogger that routes updates to the UI without printing."""
         outer = self
+
         class UIProgressLogger(ProgressBarLogger):
             def __init__(self):
                 super().__init__(min_time_interval=min_time_interval)
@@ -65,17 +48,13 @@ class VideoTrimmer:
                     pass
 
             def log(self, message):
-                # Override to avoid collecting or printing generic logs
                 return
 
         return UIProgressLogger()
 
     def _on_progress(self, bar, attr, value, old_value):
-        """Handle progress updates from the moviepy logger on the main thread."""
-        # Maintain per-bar state
         state = self._progress_state.setdefault(bar, {})
 
-        # Normalize attribute names that indicate index/total for frame progress
         if attr in ("frame_index", "index"):
             state['index'] = value
         if attr in ("total", "frames", "nframes"):
@@ -84,7 +63,6 @@ class VideoTrimmer:
         total = state.get('total')
         index = state.get('index')
 
-        # If we have both index and total, update progress bar
         if total and (index is not None):
             try:
                 percent = int((index / total) * 100)
@@ -96,7 +74,6 @@ class VideoTrimmer:
             except Exception:
                 pass
         else:
-            # If we only know total, show 0%
             if total and (index is None):
                 try:
                     self.trim_progress['value'] = 0
@@ -104,46 +81,16 @@ class VideoTrimmer:
                 except Exception:
                     pass
 
-    def _safe_close_clip(self, clip):
-        """Attempt to close a MoviePy clip robustly across versions."""
-        if not clip:
-            return
-        try:
-            # Preferred API
-            clip.close()
-        except Exception:
-            try:
-                # Try closing reader and audio reader if available
-                if hasattr(clip, "reader") and clip.reader is not None:
-                    try:
-                        clip.reader.close()
-                    except Exception:
-                        pass
-                if hasattr(clip, "audio") and clip.audio is not None and hasattr(clip.audio, "reader"):
-                    try:
-                        # some versions expose close_proc()
-                        if hasattr(clip.audio.reader, "close_proc"):
-                            clip.audio.reader.close_proc()
-                        else:
-                            clip.audio.reader.close()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-    
     def create_widgets(self):
-        # Main container
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Configure weights for resizing
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(1, weight=1)  # video row expands
+        main_frame.rowconfigure(1, weight=1)
 
-        # File selection column
         file_frame = ttk.Frame(main_frame)
         file_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         file_frame.columnconfigure(0, weight=1)
@@ -156,7 +103,6 @@ class VideoTrimmer:
         self.next_button = ttk.Button(file_frame, text="Next Video", command=self.next_video, state=tk.DISABLED)
         self.next_button.grid(row=3, column=0, sticky=tk.W, pady=5, columnspan=2)
 
-        # Trim settings column
         trim_container = ttk.Frame(main_frame)
         trim_container.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
         trim_container.columnconfigure(0, weight=1)
@@ -165,7 +111,6 @@ class VideoTrimmer:
         trim_frame = ttk.Frame(trim_container)
         trim_frame.grid(row=1, column=0, sticky=tk.W, pady=5)
 
-        # Start time
         ttk.Label(trim_frame, text="Start Time (seconds):").grid(row=0, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.start_entry = ttk.Entry(trim_frame, width=15)
         self.start_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
@@ -173,13 +118,11 @@ class VideoTrimmer:
         self.set_start_button = ttk.Button(trim_frame, text="Set to Current", command=self.set_start_to_current, state=tk.DISABLED)
         self.set_start_button.grid(row=0, column=2, padx=10)
 
-        # place trim and combine buttons alongside start row
         self.trim_button = ttk.Button(trim_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
         self.trim_button.grid(row=0, column=3, padx=(20,0))
         self.combine_button = ttk.Button(trim_frame, text="Combine Videos", command=self.combine_videos, state=tk.DISABLED)
         self.combine_button.grid(row=0, column=4, padx=(10,0))
 
-        # End time
         ttk.Label(trim_frame, text="End Time (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.end_entry = ttk.Entry(trim_frame, width=15)
         self.end_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
@@ -187,21 +130,17 @@ class VideoTrimmer:
         self.set_end_button = ttk.Button(trim_frame, text="Set to Current", command=self.set_end_to_current, state=tk.DISABLED)
         self.set_end_button.grid(row=1, column=2, padx=10)
 
-        # Output filename
         ttk.Label(trim_frame, text="Output Filename:").grid(row=2, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.output_entry = ttk.Entry(trim_frame, width=30)
         self.output_entry.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=5)
 
-        # status label aligned with output row
         self.progress_label = ttk.Label(trim_frame, text="", foreground="green")
         self.progress_label.grid(row=2, column=3, padx=(20,0))
 
-        # Trim progress bar
         self.trim_progress = ttk.Progressbar(trim_frame, length=180, mode='determinate')
         self.trim_progress.grid(row=1, column=3, sticky=(tk.W, tk.E), pady=(8,0))
         self.trim_progress['value'] = 0
 
-        # Video player (spanning columns)
         self.video_frame = ttk.LabelFrame(main_frame, text="Video Preview", padding="10")
         self.video_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         self.video_frame.columnconfigure(0, weight=1)
@@ -227,9 +166,8 @@ class VideoTrimmer:
         self.timeline = ttk.Scale(self.video_frame, from_=0, to=100, orient=tk.HORIZONTAL, command=self.on_timeline_change)
         self.timeline.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=5)
         self.timeline.state(['disabled'])
-    
+
     def browse_file(self):
-        """Open file dialog to select a video file"""
         file_path = filedialog.askopenfilename(
             title="Select a Video File",
             filetypes=[
@@ -237,12 +175,11 @@ class VideoTrimmer:
                 ("All Files", "*.*")
             ]
         )
-        
+
         if file_path:
             self.load_video(file_path)
 
     def find_next_video_path(self, current_path):
-        """Return the next alphabetically sorted video file in the same folder."""
         if not current_path:
             return None
 
@@ -270,14 +207,12 @@ class VideoTrimmer:
         return None
 
     def update_next_button_state(self):
-        """Enable or disable the next video button depending on current selection."""
         if self.video_path and self.find_next_video_path(self.video_path):
             self.next_button.config(state=tk.NORMAL)
         else:
             self.next_button.config(state=tk.DISABLED)
 
     def next_video(self):
-        """Load the next video in the same folder."""
         if not self.video_path:
             return
 
@@ -286,27 +221,23 @@ class VideoTrimmer:
             self.load_video(next_path)
 
     def find_next_numeric_output_name(self, directory, extension):
-        """Return the first available numeric filename like 1.mp4, 2.mp4, ... up to 50.
-        If none are available, return output.mp4."""
         for index in range(1, 51):
             candidate = f"{index}{extension}"
             if not os.path.exists(os.path.join(directory, candidate)):
                 return candidate
         return f"output{extension}"
-    
+
     def load_video(self, file_path):
-        """Load the selected video and update UI"""
         try:
             self.progress_label.config(text="Loading video...")
             self.root.update()
-            
-            # Clean up previous video and audio
+
             if self.cap:
                 self.cap.release()
                 self.cap = None
             if self.clip:
                 try:
-                    self._safe_close_clip(self.clip)
+                    _safe_close_clip(self.clip)
                 finally:
                     self.clip = None
             try:
@@ -324,44 +255,28 @@ class VideoTrimmer:
                     pass
                 self.temp_audio_path = None
                 self.audio_ready = False
-            
-            # Load video with OpenCV for playback
+
             self.cap = cv2.VideoCapture(file_path)
-            
-            # Load video clip for trimming
             self.clip = VideoFileClip(file_path)
             self.video_path = file_path
             self.video_duration = self.clip.duration
             self.current_time = 0
-            
-            # Get video properties
-            fps = self.cap.get(cv2.CAP_PROP_FPS)
-            total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            
-            # Update UI
+
             filename = os.path.basename(file_path)
             self.file_label.config(text=filename, foreground="black")
-            
-            # Display first frame
             self.display_frame_at_time(0)
-            
-            # Update time label
             self.update_time_label()
-            
-            # Set default trim values
+
             self.start_entry.delete(0, tk.END)
             self.start_entry.insert(0, "0.00")
-            
             self.end_entry.delete(0, tk.END)
             self.end_entry.insert(0, f"{self.video_duration:.2f}")
-            
-            # Suggest output filename using the first unused numeric name in the same folder
+
             extension = os.path.splitext(filename)[1]
             suggested_name = self.find_next_numeric_output_name(os.path.dirname(file_path), extension)
             self.output_entry.delete(0, tk.END)
             self.output_entry.insert(0, suggested_name)
-            
-            # Enable controls
+
             self.play_button.config(state=tk.NORMAL)
             self.trim_button.config(state=tk.NORMAL)
             self.combine_button.config(state=tk.NORMAL)
@@ -374,8 +289,7 @@ class VideoTrimmer:
             self.timeline.state(['!disabled'])
             self.timeline.config(to=self.video_duration)
             self.update_next_button_state()
-            
-            # If audio exists, extract in background
+
             if self.clip.audio is not None:
                 self.progress_label.config(text="Extracting audio (background)...")
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -385,32 +299,26 @@ class VideoTrimmer:
             else:
                 self.audio_ready = False
                 self.temp_audio_path = None
-            
+
             self.progress_label.config(text="Video loaded successfully!")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load video:\n{str(e)}")
             self.progress_label.config(text="")
-    
+
     def _extract_audio(self, clip, path):
-        """Extract audio to a WAV file (background)"""
         try:
-            # Write audio to a wav file. This may take time for long files.
-            # Use supported kwargs for current MoviePy versions.
             try:
-                # Use a UI-aware logger to avoid printing progress to terminal
                 logger = self._make_progress_logger()
                 clip.audio.write_audiofile(path, fps=44100, nbytes=2, write_logfile=False, logger=logger)
             except TypeError:
-                # Fallback if codec/nbytes combo not accepted; try without codec
                 clip.audio.write_audiofile(path, fps=44100, nbytes=2, write_logfile=False)
             self.temp_audio_path = path
-            # Initialize pygame mixer
             try:
                 pygame.mixer.init(frequency=44100)
             except Exception:
                 pass
-            # Load into pygame.mixer on main thread
+
             def _load():
                 try:
                     pygame.mixer.music.load(self.temp_audio_path)
@@ -419,9 +327,9 @@ class VideoTrimmer:
                 except Exception as e:
                     self.audio_ready = False
                     self.progress_label.config(text=f"Audio load failed: {e}")
+
             self.root.after(0, _load)
         except Exception as e:
-            # Try a lower-level ffmpeg writer as a fallback
             import moviepy.audio.io.ffmpeg_audiowriter as ffaw
             try:
                 ffaw.ffmpeg_audiowrite(clip, path, 44100, 2, 2000, codec='pcm_s16le', write_logfile=False, logger=self._make_progress_logger())
@@ -430,6 +338,7 @@ class VideoTrimmer:
                     pygame.mixer.init(frequency=44100)
                 except Exception:
                     pass
+
                 def _load2():
                     try:
                         pygame.mixer.music.load(self.temp_audio_path)
@@ -438,55 +347,41 @@ class VideoTrimmer:
                     except Exception as e2:
                         self.audio_ready = False
                         self.progress_label.config(text=f"Audio load failed: {e2}")
+
                 self.root.after(0, _load2)
                 return
             except Exception as e2:
                 self.audio_ready = False
                 msg = f"{e} | fallback error: {e2}"
                 self.root.after(0, lambda m=msg: self.progress_label.config(text=f"Audio extraction failed: {m}"))
-    
+
     def display_frame_at_time(self, time_sec):
-        """Display a specific frame from the video"""
         try:
-            # Set video to specific time
             self.cap.set(cv2.CAP_PROP_POS_MSEC, time_sec * 1000)
             ret, frame = self.cap.read()
-            
+
             if ret:
-                # Convert BGR to RGB
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                # Resize frame to fit canvas
                 height, width = frame.shape[:2]
                 canvas_width = 640
                 canvas_height = 360
-                
-                # Calculate scaling
                 scale = min(canvas_width / width, canvas_height / height)
                 new_width = int(width * scale)
                 new_height = int(height * scale)
-                
                 frame = cv2.resize(frame, (new_width, new_height))
-                
-                # Convert to PhotoImage
                 img = Image.fromarray(frame)
                 self.current_frame = ImageTk.PhotoImage(image=img)
-                
-                # Display on canvas
                 self.canvas.delete("all")
                 x = (canvas_width - new_width) // 2
                 y = (canvas_height - new_height) // 2
                 self.canvas.create_image(x, y, anchor=tk.NW, image=self.current_frame)
-                
         except Exception as e:
             print(f"Error displaying frame: {e}")
-    
+
     def toggle_play(self):
-        """Toggle video playback"""
         if self.is_playing:
             self.is_playing = False
             self.play_button.config(text="▶ Play")
-            # Stop audio if playing
             try:
                 pygame.mixer.music.stop()
             except Exception:
@@ -494,16 +389,14 @@ class VideoTrimmer:
         else:
             self.is_playing = True
             self.play_button.config(text="⏸ Pause")
-            # Start audio (if ready) at current time
             if self.audio_ready and self.temp_audio_path:
                 try:
                     self.play_audio_from(self.current_time)
                 except Exception:
                     pass
             self.play_video()
-    
+
     def play_audio_from(self, start_time):
-        """Play audio WAV starting from given time (non-blocking) using pygame."""
         if not self.audio_ready or not self.temp_audio_path:
             return
         try:
@@ -511,11 +404,9 @@ class VideoTrimmer:
                 pygame.mixer.music.stop()
             except Exception:
                 pass
-            # pygame 2 supports 'start' parameter
             try:
                 pygame.mixer.music.play(loops=0, start=start_time)
             except TypeError:
-                # fallback: play then set position (may not work for all formats)
                 pygame.mixer.music.play(loops=0)
                 try:
                     pygame.mixer.music.set_pos(start_time)
@@ -523,24 +414,21 @@ class VideoTrimmer:
                     pass
         except Exception as e:
             print(f"Audio playback error: {e}")
-    
+
     def play_video(self):
-        """Play video frames"""
         if not self.is_playing or not self.cap:
             return
-        
+
         fps = self.cap.get(cv2.CAP_PROP_FPS)
         try:
             frame_delay = int(1000 / fps) if fps and fps > 0 else 33
         except Exception:
             frame_delay = 33
-        
+
         ret, frame = self.cap.read()
-        
+
         if ret:
             self.current_time = self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
-            
-            # Display frame
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             height, width = frame.shape[:2]
             canvas_width = 640
@@ -549,68 +437,52 @@ class VideoTrimmer:
             new_width = int(width * scale)
             new_height = int(height * scale)
             frame = cv2.resize(frame, (new_width, new_height))
-            
             img = Image.fromarray(frame)
             self.current_frame = ImageTk.PhotoImage(image=img)
-            
             self.canvas.delete("all")
             x = (canvas_width - new_width) // 2
             y = (canvas_height - new_height) // 2
             self.canvas.create_image(x, y, anchor=tk.NW, image=self.current_frame)
-            
-            # Update timeline and time label
             self.timeline.set(self.current_time)
             self.update_time_label()
-            
-            # Schedule next frame
             self.root.after(frame_delay, self.play_video)
         else:
-            # Video ended
             self.is_playing = False
             self.play_button.config(text="▶ Play")
             self.current_time = 0
             self.cap.set(cv2.CAP_PROP_POS_MSEC, 0)
-            # Stop audio
             try:
                 pygame.mixer.music.stop()
             except Exception:
                 pass
-    
+
     def on_timeline_change(self, value):
-        """Handle timeline slider change"""
         if not self.is_playing:
             time_sec = float(value)
             self.current_time = time_sec
             self.display_frame_at_time(time_sec)
             self.update_time_label()
-            # Stop audio if it was playing (we are not in playing mode here)
             try:
                 pygame.mixer.music.stop()
             except Exception:
                 pass
-    
+
     def update_time_label(self):
-        """Update the time display label"""
         current_min = int(self.current_time // 60)
         current_sec = self.current_time % 60
-        
         total_min = int(self.video_duration // 60)
         total_sec = self.video_duration % 60
-        
         self.time_label.config(text=f"{current_min:02d}:{current_sec:05.2f} / {total_min:02d}:{total_sec:05.2f}")
-    
+
     def set_start_to_current(self):
-        """Set start time to current playback position"""
         self.start_entry.delete(0, tk.END)
         self.start_entry.insert(0, f"{self.current_time:.2f}")
-    
+
     def set_end_to_current(self):
-        """Set end time to current playback position"""
         self.end_entry.delete(0, tk.END)
         self.end_entry.insert(0, f"{self.current_time:.2f}")
-    
+
     def jump(self, seconds):
-        """Jump forward or backward by seconds, updating audio/video"""
         if not self.clip or not self.cap:
             return
         new_time = self.current_time + seconds
@@ -620,7 +492,6 @@ class VideoTrimmer:
         self.display_frame_at_time(new_time)
         self.timeline.set(new_time)
         self.update_time_label()
-        # If currently playing, restart audio from new position
         if self.is_playing and self.audio_ready and self.temp_audio_path:
             try:
                 pygame.mixer.music.stop()
@@ -630,9 +501,8 @@ class VideoTrimmer:
                 self.play_audio_from(new_time)
             except Exception:
                 pass
-    
+
     def jump_to_start_cut(self):
-        """Jump to the start of cut time"""
         try:
             start_time = float(self.start_entry.get())
             self.current_time = start_time
@@ -640,7 +510,6 @@ class VideoTrimmer:
             self.display_frame_at_time(start_time)
             self.timeline.set(start_time)
             self.update_time_label()
-            # If currently playing, restart audio from new position
             if self.is_playing and self.audio_ready and self.temp_audio_path:
                 try:
                     pygame.mixer.music.stop()
@@ -652,9 +521,8 @@ class VideoTrimmer:
                     pass
         except ValueError:
             pass
-    
+
     def jump_to_end_cut(self):
-        """Jump to the end of cut time"""
         try:
             end_time = float(self.end_entry.get())
             self.current_time = end_time
@@ -662,7 +530,6 @@ class VideoTrimmer:
             self.display_frame_at_time(end_time)
             self.timeline.set(end_time)
             self.update_time_label()
-            # If currently playing, restart audio from new position
             if self.is_playing and self.audio_ready and self.temp_audio_path:
                 try:
                     pygame.mixer.music.stop()
@@ -674,88 +541,63 @@ class VideoTrimmer:
                     pass
         except ValueError:
             pass
-    
+
     def trim_video(self):
-        """Trim the video based on start and end times"""
         if not self.clip:
             messagebox.showwarning("Warning", "Please select a video first!")
             return
-        
+
         try:
-            # Get trim times
             start_time = float(self.start_entry.get())
             end_time = float(self.end_entry.get())
             output_name = self.output_entry.get()
-            
-            # Validate inputs
+
             if start_time < 0 or end_time > self.video_duration:
                 messagebox.showerror("Error", "Trim times are out of video duration range!")
                 return
-            
             if start_time >= end_time:
                 messagebox.showerror("Error", "Start time must be less than end time!")
                 return
-            
             if not output_name:
                 messagebox.showerror("Error", "Please enter an output filename!")
                 return
-            
-            # Get output path (same directory as input)
+
             output_dir = os.path.dirname(self.video_path)
             output_path = os.path.join(output_dir, output_name)
-            
-            # Disable button during processing
+
             self.trim_button.config(state=tk.DISABLED)
             self.progress_label.config(text="Trimming video... This may take a while.")
-            
-            # Run trimming in a separate thread to keep UI responsive
-            thread = threading.Thread(target=self.process_trim, args=(start_time, end_time, output_path))
+
+            thread = threading.Thread(target=self.process_trim, args=(start_time, end_time, output_path), daemon=True)
             thread.start()
-            
+
         except ValueError:
             messagebox.showerror("Error", "Please enter valid numbers for start and end times!")
             self.trim_button.config(state=tk.NORMAL)
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
             self.trim_button.config(state=tk.NORMAL)
-    
-    def process_trim(self, start_time, end_time, output_path):
-        """Process the video trimming in a separate thread"""
-        try:
-            # Create trimmed clip (use compatibility helper)
-            trimmed_clip = self._make_subclip(self.clip, start_time, end_time)
-            
-            # Write to file using UI progress logger to avoid terminal progress output
-            logger = self._make_progress_logger()
-            trimmed_clip.write_videofile(output_path, codec="libx264", audio_codec="aac", logger=logger)
 
-            # Close clips robustly
-            try:
-                self._safe_close_clip(trimmed_clip)
-            except Exception:
-                pass
-            
-            # Update UI on main thread
+    def process_trim(self, start_time, end_time, output_path):
+        try:
+            logger = self._make_progress_logger()
+            trim_video(self.video_path, start_time, end_time, output_path, logger=logger)
             self.root.after(0, self.trim_complete, output_path)
-            
         except Exception as e:
             self.root.after(0, self.trim_error, str(e))
-    
+
     def trim_complete(self, output_path):
-        """Called when trimming is complete"""
         self.progress_label.config(text=f"Video trimmed successfully!")
         messagebox.showinfo("Success", f"Video saved to:\n{output_path}")
         self.trim_button.config(state=tk.NORMAL)
-    
+
     def trim_error(self, error_msg):
-        """Called when trimming fails"""
         self.progress_label.config(text="Trimming failed!")
         messagebox.showerror("Error", f"Failed to trim video:\n{error_msg}")
         self.trim_button.config(state=tk.NORMAL)
         self.combine_button.config(state=tk.NORMAL)
 
     def combine_videos(self):
-        """Combine numbered videos in the current file folder."""
         if not self.video_path:
             messagebox.showwarning("Warning", "Please select a video first!")
             return
@@ -764,129 +606,35 @@ class VideoTrimmer:
         self.progress_label.config(text="Combining videos in current folder...")
         threading.Thread(target=self.process_combine, daemon=True).start()
 
-    def _fade_clip(self, clip, fade_duration=1.0):
-        """Apply a fade in and fade out effect to a clip."""
-        try:
-            if hasattr(moviepy.video.fx, 'FadeIn') and hasattr(moviepy.video.fx, 'FadeOut'):
-                clip = moviepy.video.fx.FadeIn(fade_duration).apply(clip)
-                clip = moviepy.video.fx.FadeOut(fade_duration).apply(clip)
-                return clip
-        except Exception:
-            pass
-
-        try:
-            from moviepy.video.fx.all import fadein, fadeout
-            clip = fadein(clip, fade_duration)
-            clip = fadeout(clip, fade_duration)
-        except Exception:
-            pass
-        return clip
-
-    def _find_combine_output_name(self, directory):
-        """Return an available output filename in the current folder."""
-        folder_name = os.path.basename(directory)
-        parent_name = os.path.basename(os.path.dirname(directory))
-        if parent_name:
-            base_name = f"{parent_name} - {folder_name}"
-        else:
-            base_name = folder_name
-
-        candidate = f"{base_name}.mp4"
-        counter = 1
-        while os.path.exists(os.path.join(directory, candidate)):
-            candidate = f"{base_name} ({counter}).mp4"
-            counter += 1
-        return candidate
-
     def process_combine(self):
-        """Process combining numbered clips in the selected folder."""
         try:
             directory = os.path.dirname(self.video_path)
-            clips = []
-            index = 1
-
-            while True:
-                file_name = f"{index}.mp4"
-                clip_path = os.path.join(directory, file_name)
-                if not os.path.exists(clip_path):
-                    break
-
-                clip = VideoFileClip(clip_path)
-                clip = self._fade_clip(clip)
-                clips.append(clip)
-                index += 1
-
-            if not clips:
-                raise RuntimeError("No numbered mp4 files found in the current folder.")
-
-            combined = concatenate_videoclips(clips)
-            output_name = self._find_combine_output_name(directory)
-            output_path = os.path.join(directory, output_name)
-            logger = self._make_progress_logger()
-            combined.write_videofile(output_path, codec="libx264", audio_codec="aac", logger=logger)
-
-            try:
-                self._safe_close_clip(combined)
-            except Exception:
-                pass
-            for clip in clips:
-                try:
-                    self._safe_close_clip(clip)
-                except Exception:
-                    pass
-
+            output_path = combine_numbered_clips(directory, fade_duration=1.0, logger=self._make_progress_logger())
             self.root.after(0, self.combine_complete, output_path)
         except Exception as e:
             self.root.after(0, self.combine_error, str(e))
 
     def combine_complete(self, output_path):
-        """Called when combine completes successfully."""
         self.progress_label.config(text="Videos combined successfully!")
         messagebox.showinfo("Success", f"Combined video saved to:\n{output_path}")
         self.combine_button.config(state=tk.NORMAL)
 
     def combine_error(self, error_msg):
-        """Called when combine fails."""
         self.progress_label.config(text="Combine failed!")
         messagebox.showerror("Error", f"Failed to combine videos:\n{error_msg}")
         self.combine_button.config(state=tk.NORMAL)
 
     def cleanup(self):
-        """Clean up resources when closing"""
         self.is_playing = False
         if self.cap:
             self.cap.release()
             self.cap = None
         if self.clip:
             try:
-                self._safe_close_clip(self.clip)
+                _safe_close_clip(self.clip)
             finally:
                 self.clip = None
         try:
             pygame.mixer.music.stop()
         except Exception:
             pass
-
-    def _make_subclip(self, clip, start, end):
-        """Return a subclip between start and end, compatible across MoviePy versions."""
-        # Prefer older API
-        if hasattr(clip, "subclip"):
-            return clip.subclip(start, end)
-        # Newer API
-        if hasattr(clip, "subclipped"):
-            return clip.subclipped(start, end)
-        # Try slice syntax
-        try:
-            return clip[start:end]
-        except Exception:
-            pass
-        # As a last resort, try composing via time_transform
-        try:
-            new_clip = clip.time_transform(lambda t: t + start, apply_to=[])
-            if end is None:
-                return new_clip
-            new_clip.duration = end - start
-            new_clip.end = new_clip.start + new_clip.duration
-            return new_clip
-        except Exception:
-            raise RuntimeError("Unable to create subclip with installed MoviePy version")

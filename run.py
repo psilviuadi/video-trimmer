@@ -40,7 +40,7 @@ class StreamToLogger:
 sys.stdout = StreamToLogger(logger, logging.INFO)
 sys.stderr = StreamToLogger(logger, logging.ERROR)
 
-from src.video_trimmer import VideoTrimmer
+from src.app_ui import VideoTrimmer
 import tkinter as tk
 
 

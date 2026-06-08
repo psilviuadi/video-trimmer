@@ -22,6 +22,7 @@ from PIL import Image, ImageTk
 import cv2
 import tempfile
 import pygame
+from proglog import ProgressBarLogger
 
 class VideoTrimmer:
     def __init__(self, root):
@@ -41,9 +42,65 @@ class VideoTrimmer:
         # Audio-related
         self.temp_audio_path = None
         self.audio_ready = False
+        # Progress tracking state for UI
+        self._progress_state = {}
+        self._progress_lock = threading.Lock()
         
         # Create UI components
         self.create_widgets()
+
+    def _make_progress_logger(self, min_time_interval=0.2):
+        """Create a ProgressBarLogger that routes updates to the UI without printing."""
+        outer = self
+        class UIProgressLogger(ProgressBarLogger):
+            def __init__(self):
+                super().__init__(min_time_interval=min_time_interval)
+
+            def bars_callback(self, bar, attr, value, old_value=None):
+                try:
+                    outer.root.after(0, outer._on_progress, bar, attr, value, old_value)
+                except Exception:
+                    pass
+
+            def log(self, message):
+                # Override to avoid collecting or printing generic logs
+                return
+
+        return UIProgressLogger()
+
+    def _on_progress(self, bar, attr, value, old_value):
+        """Handle progress updates from the moviepy logger on the main thread."""
+        # Maintain per-bar state
+        state = self._progress_state.setdefault(bar, {})
+
+        # Normalize attribute names that indicate index/total for frame progress
+        if attr in ("frame_index", "index"):
+            state['index'] = value
+        if attr in ("total", "frames", "nframes"):
+            state['total'] = value
+
+        total = state.get('total')
+        index = state.get('index')
+
+        # If we have both index and total, update progress bar
+        if total and (index is not None):
+            try:
+                percent = int((index / total) * 100)
+            except Exception:
+                percent = 0
+            try:
+                self.trim_progress['value'] = percent
+                self.progress_label.config(text=f"Progress: {percent}%")
+            except Exception:
+                pass
+        else:
+            # If we only know total, show 0%
+            if total and (index is None):
+                try:
+                    self.trim_progress['value'] = 0
+                    self.progress_label.config(text=f"Progress: 0%")
+                except Exception:
+                    pass
 
     def _safe_close_clip(self, clip):
         """Attempt to close a MoviePy clip robustly across versions."""
@@ -134,6 +191,11 @@ class VideoTrimmer:
         # status label aligned with output row
         self.progress_label = ttk.Label(trim_frame, text="", foreground="green")
         self.progress_label.grid(row=2, column=3, padx=(20,0))
+
+        # Trim progress bar
+        self.trim_progress = ttk.Progressbar(trim_frame, length=180, mode='determinate')
+        self.trim_progress.grid(row=1, column=3, sticky=(tk.W, tk.E), pady=(8,0))
+        self.trim_progress['value'] = 0
 
         # Video player (spanning columns)
         self.video_frame = ttk.LabelFrame(main_frame, text="Video Preview", padding="10")
@@ -331,7 +393,9 @@ class VideoTrimmer:
             # Write audio to a wav file. This may take time for long files.
             # Use supported kwargs for current MoviePy versions.
             try:
-                clip.audio.write_audiofile(path, fps=44100, nbytes=2, codec='pcm_s16le', write_logfile=False)
+                # Use a UI-aware logger to avoid printing progress to terminal
+                logger = self._make_progress_logger()
+                clip.audio.write_audiofile(path, fps=44100, nbytes=2, write_logfile=False, logger=logger)
             except TypeError:
                 # Fallback if codec/nbytes combo not accepted; try without codec
                 clip.audio.write_audiofile(path, fps=44100, nbytes=2, write_logfile=False)
@@ -355,7 +419,7 @@ class VideoTrimmer:
             # Try a lower-level ffmpeg writer as a fallback
             import moviepy.audio.io.ffmpeg_audiowriter as ffaw
             try:
-                ffaw.ffmpeg_audiowrite(clip, path, 44100, 2, 2000, codec='pcm_s16le', write_logfile=False)
+                ffaw.ffmpeg_audiowrite(clip, path, 44100, 2, 2000, codec='pcm_s16le', write_logfile=False, logger=self._make_progress_logger())
                 self.temp_audio_path = path
                 try:
                     pygame.mixer.init(frequency=44100)
@@ -656,8 +720,9 @@ class VideoTrimmer:
             # Create trimmed clip (use compatibility helper)
             trimmed_clip = self._make_subclip(self.clip, start_time, end_time)
             
-            # Write to file
-            trimmed_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
+            # Write to file using UI progress logger to avoid terminal progress output
+            logger = self._make_progress_logger()
+            trimmed_clip.write_videofile(output_path, codec="libx264", audio_codec="aac", logger=logger)
 
             # Close clips robustly
             try:

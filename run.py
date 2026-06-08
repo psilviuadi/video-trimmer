@@ -1,5 +1,10 @@
 # run.py
 import os
+from src.env_utils import load_env
+
+# Load environment variables from .env or .env.example
+load_env()
+
 import sys
 import logging
 from logging.handlers import RotatingFileHandler

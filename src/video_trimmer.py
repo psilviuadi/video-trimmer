@@ -2,6 +2,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 import os
+from .env_utils import load_env
+
+# Load environment variables from .env or .env.example
+load_env()
+
 import moviepy
 try:
     from moviepy.editor import VideoFileClip

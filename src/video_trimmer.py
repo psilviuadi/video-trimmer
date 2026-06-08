@@ -9,13 +9,15 @@ load_env()
 
 import moviepy
 try:
-    from moviepy.editor import VideoFileClip
+    from moviepy.editor import VideoFileClip, concatenate_videoclips
 except Exception:
     try:
         from moviepy.video.io.VideoFileClip import VideoFileClip
+        from moviepy.video.compositing.concatenate import concatenate_videoclips
     except Exception:
         VideoFileClip = getattr(moviepy, 'VideoFileClip', None)
-        if VideoFileClip is None:
+        concatenate_videoclips = getattr(moviepy, 'concatenate_videoclips', None)
+        if VideoFileClip is None or concatenate_videoclips is None:
             raise
 import threading
 from PIL import Image, ImageTk
@@ -28,7 +30,7 @@ class VideoTrimmer:
     def __init__(self, root):
         self.root = root
         self.root.title("Video Trimmer")
-        self.root.geometry("900x700")
+        self.root.geometry("900x750")
         
         # Variables to store video info
         self.video_path = None
@@ -171,9 +173,11 @@ class VideoTrimmer:
         self.set_start_button = ttk.Button(trim_frame, text="Set to Current", command=self.set_start_to_current, state=tk.DISABLED)
         self.set_start_button.grid(row=0, column=2, padx=10)
 
-        # place trim button alongside start row
+        # place trim and combine buttons alongside start row
         self.trim_button = ttk.Button(trim_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
         self.trim_button.grid(row=0, column=3, padx=(20,0))
+        self.combine_button = ttk.Button(trim_frame, text="Combine Videos", command=self.combine_videos, state=tk.DISABLED)
+        self.combine_button.grid(row=0, column=4, padx=(10,0))
 
         # End time
         ttk.Label(trim_frame, text="End Time (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5, padx=(0, 10))
@@ -360,6 +364,7 @@ class VideoTrimmer:
             # Enable controls
             self.play_button.config(state=tk.NORMAL)
             self.trim_button.config(state=tk.NORMAL)
+            self.combine_button.config(state=tk.NORMAL)
             self.set_start_button.config(state=tk.NORMAL)
             self.set_end_button.config(state=tk.NORMAL)
             self.jump_back_button.config(state=tk.NORMAL)
@@ -747,7 +752,105 @@ class VideoTrimmer:
         self.progress_label.config(text="Trimming failed!")
         messagebox.showerror("Error", f"Failed to trim video:\n{error_msg}")
         self.trim_button.config(state=tk.NORMAL)
-    
+        self.combine_button.config(state=tk.NORMAL)
+
+    def combine_videos(self):
+        """Combine numbered videos in the current file folder."""
+        if not self.video_path:
+            messagebox.showwarning("Warning", "Please select a video first!")
+            return
+
+        self.combine_button.config(state=tk.DISABLED)
+        self.progress_label.config(text="Combining videos in current folder...")
+        threading.Thread(target=self.process_combine, daemon=True).start()
+
+    def _fade_clip(self, clip, fade_duration=1.0):
+        """Apply a fade in and fade out effect to a clip."""
+        try:
+            if hasattr(moviepy.video.fx, 'FadeIn') and hasattr(moviepy.video.fx, 'FadeOut'):
+                clip = moviepy.video.fx.FadeIn(fade_duration).apply(clip)
+                clip = moviepy.video.fx.FadeOut(fade_duration).apply(clip)
+                return clip
+        except Exception:
+            pass
+
+        try:
+            from moviepy.video.fx.all import fadein, fadeout
+            clip = fadein(clip, fade_duration)
+            clip = fadeout(clip, fade_duration)
+        except Exception:
+            pass
+        return clip
+
+    def _find_combine_output_name(self, directory):
+        """Return an available output filename in the current folder."""
+        folder_name = os.path.basename(directory)
+        parent_name = os.path.basename(os.path.dirname(directory))
+        if parent_name:
+            base_name = f"{parent_name} - {folder_name}"
+        else:
+            base_name = folder_name
+
+        candidate = f"{base_name}.mp4"
+        counter = 1
+        while os.path.exists(os.path.join(directory, candidate)):
+            candidate = f"{base_name} ({counter}).mp4"
+            counter += 1
+        return candidate
+
+    def process_combine(self):
+        """Process combining numbered clips in the selected folder."""
+        try:
+            directory = os.path.dirname(self.video_path)
+            clips = []
+            index = 1
+
+            while True:
+                file_name = f"{index}.mp4"
+                clip_path = os.path.join(directory, file_name)
+                if not os.path.exists(clip_path):
+                    break
+
+                clip = VideoFileClip(clip_path)
+                clip = self._fade_clip(clip)
+                clips.append(clip)
+                index += 1
+
+            if not clips:
+                raise RuntimeError("No numbered mp4 files found in the current folder.")
+
+            combined = concatenate_videoclips(clips)
+            output_name = self._find_combine_output_name(directory)
+            output_path = os.path.join(directory, output_name)
+            logger = self._make_progress_logger()
+            combined.write_videofile(output_path, codec="libx264", audio_codec="aac", logger=logger)
+
+            try:
+                self._safe_close_clip(combined)
+            except Exception:
+                pass
+            for clip in clips:
+                try:
+                    self._safe_close_clip(clip)
+                except Exception:
+                    pass
+
+            self.root.after(0, self.combine_complete, output_path)
+        except Exception as e:
+            self.root.after(0, self.combine_error, str(e))
+
+    def combine_complete(self, output_path):
+        """Called when combine completes successfully."""
+        self.progress_label.config(text="Videos combined successfully!")
+        messagebox.showinfo("Success", f"Combined video saved to:\n{output_path}")
+        self.combine_button.config(state=tk.NORMAL)
+
+    def combine_error(self, error_msg):
+        """Called when combine fails."""
+        self.progress_label.config(text="Combine failed!")
+        messagebox.showerror("Error", f"Failed to combine videos:\n{error_msg}")
+        self.combine_button.config(state=tk.NORMAL)
+
     def cleanup(self):
         """Clean up resources when closing"""
         self.is_playing = False

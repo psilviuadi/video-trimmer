@@ -110,6 +110,8 @@ class VideoTrimmer:
         ttk.Label(trim_container, text="Trim Settings:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
         trim_frame = ttk.Frame(trim_container)
         trim_frame.grid(row=1, column=0, sticky=tk.W, pady=5)
+        trim_frame.columnconfigure(3, weight=1)
+        trim_frame.columnconfigure(4, weight=1)
 
         ttk.Label(trim_frame, text="Start Time (seconds):").grid(row=0, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.start_entry = ttk.Entry(trim_frame, width=15)
@@ -119,9 +121,9 @@ class VideoTrimmer:
         self.set_start_button.grid(row=0, column=2, padx=10)
 
         self.trim_button = ttk.Button(trim_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
-        self.trim_button.grid(row=0, column=3, padx=(20,0))
+        self.trim_button.grid(row=0, column=3, sticky=tk.W)
         self.combine_button = ttk.Button(trim_frame, text="Combine Videos", command=self.combine_videos, state=tk.DISABLED)
-        self.combine_button.grid(row=0, column=4, padx=(10,0))
+        self.combine_button.grid(row=0, column=4, sticky=tk.W)
 
         ttk.Label(trim_frame, text="End Time (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5, padx=(0, 10))
         self.end_entry = ttk.Entry(trim_frame, width=15)
@@ -135,10 +137,10 @@ class VideoTrimmer:
         self.output_entry.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=5)
 
         self.progress_label = ttk.Label(trim_frame, text="", foreground="green")
-        self.progress_label.grid(row=2, column=3, padx=(20,0))
+        self.progress_label.grid(row=3, column=0, columnspan=5, sticky=tk.W, pady=(5,0))
 
         self.trim_progress = ttk.Progressbar(trim_frame, length=180, mode='determinate')
-        self.trim_progress.grid(row=1, column=3, sticky=(tk.W, tk.E), pady=(8,0))
+        self.trim_progress.grid(row=1, column=3, columnspan=2, sticky=tk.W, pady=(8,0))
         self.trim_progress['value'] = 0
 
         self.video_frame = ttk.LabelFrame(main_frame, text="Video Preview", padding="10")

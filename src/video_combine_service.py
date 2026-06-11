@@ -81,7 +81,10 @@ def combine_numbered_clips(directory, output_path=None, fade_duration=1.0, logge
         raise RuntimeError("No numbered mp4 files found in the current folder.")
 
     combined = concatenate_videoclips(clips)
-    output_path = output_path or _find_combine_output_name(directory)
+    if output_path:
+        output_path = os.path.abspath(output_path)
+    else:
+        output_path = os.path.join(directory, _find_combine_output_name(directory))
     combined.write_videofile(output_path, codec="libx264", audio_codec="aac", logger=logger)
 
     try:

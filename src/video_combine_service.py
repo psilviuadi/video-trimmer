@@ -1,17 +1,8 @@
 import os
 import moviepy
 
-try:
-    from moviepy.editor import VideoFileClip, concatenate_videoclips
-except Exception:
-    try:
-        from moviepy.video.io.VideoFileClip import VideoFileClip
-        from moviepy.video.compositing.concatenate import concatenate_videoclips
-    except Exception:
-        VideoFileClip = getattr(moviepy, 'VideoFileClip', None)
-        concatenate_videoclips = getattr(moviepy, 'concatenate_videoclips', None)
-        if VideoFileClip is None or concatenate_videoclips is None:
-            raise
+VideoFileClip = getattr(moviepy, 'VideoFileClip', None)
+concatenate_videoclips = getattr(moviepy, 'concatenate_videoclips', None)
 
 
 def _fade_clip(clip, fade_duration=1.0):
@@ -43,10 +34,6 @@ def _find_combine_output_name(directory):
         base_name = folder_name
 
     candidate = f"{base_name}.mp4"
-    counter = 1
-    while os.path.exists(os.path.join(directory, candidate)):
-        candidate = f"{base_name} ({counter}).mp4"
-        counter += 1
     return candidate
 
 

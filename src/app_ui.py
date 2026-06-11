@@ -18,7 +18,7 @@ class VideoTrimmer:
     def __init__(self, root):
         self.root = root
         self.root.title("Video Trimmer")
-        self.root.geometry("900x750")
+        self.root.geometry("1000x800")
 
         self.video_path = None
         self.video_duration = 0
@@ -89,62 +89,62 @@ class VideoTrimmer:
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
+        main_frame.columnconfigure(2, weight=1)
         main_frame.rowconfigure(1, weight=1)
 
-        file_frame = ttk.Frame(main_frame)
-        file_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        file_frame = ttk.LabelFrame(main_frame, text="Video Selection", padding="10")
+        file_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
         file_frame.columnconfigure(0, weight=1)
-        file_frame.columnconfigure(1, weight=0)
 
-        ttk.Label(file_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5, columnspan=2)
+        ttk.Label(file_frame, text="Select Video File:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
         self.file_label = ttk.Label(file_frame, text="No file selected", foreground="gray")
-        self.file_label.grid(row=1, column=0, sticky=tk.W, pady=5, columnspan=2)
-        ttk.Button(file_frame, text="Browse Video", command=self.browse_file).grid(row=2, column=0, sticky=tk.W, pady=10)
+        self.file_label.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=5)
+        ttk.Button(file_frame, text="Select Video", command=self.browse_file).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=10)
         self.next_button = ttk.Button(file_frame, text="Next Video", command=self.next_video, state=tk.DISABLED)
-        self.next_button.grid(row=3, column=0, sticky=tk.W, pady=5, columnspan=2)
+        self.next_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
 
-        trim_container = ttk.Frame(main_frame)
-        trim_container.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
-        trim_container.columnconfigure(0, weight=1)
+        trim_frame = ttk.LabelFrame(main_frame, text="Video Trimming", padding="10")
+        trim_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
+        trim_frame.columnconfigure(1, weight=1)
+        trim_frame.columnconfigure(2, weight=0)
 
-        ttk.Label(trim_container, text="Trim Settings:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5)
-        trim_frame = ttk.Frame(trim_container)
-        trim_frame.grid(row=1, column=0, sticky=tk.W, pady=5)
-        trim_frame.columnconfigure(3, weight=1)
-        trim_frame.columnconfigure(4, weight=1)
-
-        ttk.Label(trim_frame, text="Start Time (seconds):").grid(row=0, column=0, sticky=tk.W, pady=5, padx=(0, 10))
-        self.start_entry = ttk.Entry(trim_frame, width=15)
-        self.start_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
+        ttk.Label(trim_frame, text="Start Time:").grid(row=0, column=0, sticky=tk.W, pady=5, padx=(0, 10))
+        self.start_entry = ttk.Entry(trim_frame, width=20)
+        self.start_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
         self.start_entry.insert(0, "0.00")
         self.set_start_button = ttk.Button(trim_frame, text="Set to Current", command=self.set_start_to_current, state=tk.DISABLED)
         self.set_start_button.grid(row=0, column=2, padx=10)
 
-        self.trim_button = ttk.Button(trim_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
-        self.trim_button.grid(row=0, column=3, sticky=tk.W)
-        self.combine_button = ttk.Button(trim_frame, text="Combine Videos", command=self.combine_videos, state=tk.DISABLED)
-        self.combine_button.grid(row=0, column=4, sticky=tk.W)
-
-        ttk.Label(trim_frame, text="End Time (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5, padx=(0, 10))
-        self.end_entry = ttk.Entry(trim_frame, width=15)
-        self.end_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
+        ttk.Label(trim_frame, text="End Time:").grid(row=1, column=0, sticky=tk.W, pady=5, padx=(0, 10))
+        self.end_entry = ttk.Entry(trim_frame, width=20)
+        self.end_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
         self.end_entry.insert(0, "0.00")
         self.set_end_button = ttk.Button(trim_frame, text="Set to Current", command=self.set_end_to_current, state=tk.DISABLED)
         self.set_end_button.grid(row=1, column=2, padx=10)
 
-        ttk.Label(trim_frame, text="Output Filename:").grid(row=2, column=0, sticky=tk.W, pady=5, padx=(0, 10))
-        self.output_entry = ttk.Entry(trim_frame, width=30)
-        self.output_entry.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=5)
+        ttk.Label(trim_frame, text="Output:").grid(row=2, column=0, sticky=tk.W, pady=5, padx=(0, 10))
+        self.output_entry = ttk.Entry(trim_frame, width=20)
+        self.output_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5)
+        self.end_entry.insert(0, "0.00")
+        self.trim_button = ttk.Button(trim_frame, text="Trim Video", command=self.trim_video, state=tk.DISABLED)
+        self.trim_button.grid(row=2, column=2, padx=10)
 
-        self.progress_label = ttk.Label(trim_frame, text="", foreground="green")
-        self.progress_label.grid(row=3, column=0, columnspan=5, sticky=tk.W, pady=(5,0))
+        status_frame = ttk.LabelFrame(main_frame, text="Status / Combine", padding="10")
+        status_frame.grid(row=0, column=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        status_frame.columnconfigure(0, weight=1)
 
-        self.trim_progress = ttk.Progressbar(trim_frame, length=180, mode='determinate')
-        self.trim_progress.grid(row=1, column=3, columnspan=2, sticky=tk.W, pady=(8,0))
+        self.combine_button = ttk.Button(status_frame, text="Combine Videos", command=self.combine_videos, state=tk.DISABLED)
+        self.combine_button.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+
+        self.trim_progress = ttk.Progressbar(status_frame, length=220, mode='determinate')
+        self.trim_progress.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.trim_progress['value'] = 0
 
+        self.progress_label = ttk.Label(status_frame, text="", foreground="green")
+        self.progress_label.grid(row=2, column=0, sticky=tk.W)
+
         self.video_frame = ttk.LabelFrame(main_frame, text="Video Preview", padding="10")
-        self.video_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        self.video_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         self.video_frame.columnconfigure(0, weight=1)
 
         self.canvas = tk.Canvas(self.video_frame, width=800, height=450, bg="black")
